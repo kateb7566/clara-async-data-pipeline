@@ -1,57 +1,78 @@
 import pytest
-from httpx import AsyncClient
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.future import select
+from unittest.mock import AsyncMock, MagicMock
+from datetime import datetime
+from fastapi import HTTPException
 
-from app.main import app  # assuming your FastAPI app is here
+from app.api.routes import get_records, get_record
 from app.models.schema import RecordModel
-from app.storage.database import get_db_session
 
-# Test DB override setup
-@pytest.fixture
-async def test_db_session(async_session: AsyncSession):
-    yield async_session  # this should be a clean test session (fixture defined elsewhere)
+# Mock record for reuse
+mock_record = RecordModel(
+    id=1,
+    name="Test Record",
+    value=99.9,
+    timestamp=datetime(2024, 1, 1, 0, 0)
+)
 
-@pytest.fixture(autouse=True)
-def override_get_db_session(test_db_session):
-    app.dependency_overrides[get_db_session] = lambda: test_db_session
-
+# -------------------------------
+# ✅ Use Case: Get all records - Success
+# -------------------------------
 @pytest.mark.asyncio
-async def test_get_records_empty(async_session):
-    async with AsyncClient(app=app, base_url="http://test") as ac:
-        response = await ac.get("/records")
-        assert response.status_code == 200
-        assert response.json() == []
+async def test_get_all_records_success():
+    mock_session = AsyncMock()
+    mock_result = MagicMock()
+    mock_result.scalars.return_value.all.return_value = [mock_record]
+    mock_session.execute.return_value = mock_result
 
+    result = await get_records(db=mock_session)
+
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert result[0].id == mock_record.id
+    assert result[0].name == mock_record.name
+
+# -------------------------------
+# ✅ Use Case: Get all records - No records found
+# -------------------------------
 @pytest.mark.asyncio
-async def test_get_records_with_data(async_session):
-    # Insert mock data
-    record = RecordModel(id=1, name="Test", timestamp="2024-01-01T00:00:00", value=10.0)
-    async_session.add(record)
-    await async_session.commit()
+async def test_get_all_records_empty():
+    mock_session = AsyncMock()
+    mock_result = MagicMock()
+    mock_result.scalars.return_value.all.return_value = []
+    mock_session.execute.return_value = mock_result
 
-    async with AsyncClient(app=app, base_url="http://test") as ac:
-        response = await ac.get("/records")
-        assert response.status_code == 200
-        data = response.json()
-        assert len(data) == 1
-        assert data[0]["id"] == 1
-        assert data[0]["name"] == "Test"
+    result = await get_records(db=mock_session)
 
+    assert isinstance(result, list)
+    assert result == []
+
+# -------------------------------
+# ✅ Use Case: Get record by ID - Success
+# -------------------------------
 @pytest.mark.asyncio
-async def test_get_record_by_id_found(async_session):
-    record = RecordModel(id=2, name="Found", timestamp="2024-01-02T00:00:00", value=20.0)
-    async_session.add(record)
-    await async_session.commit()
+async def test_get_record_by_id_success():
+    mock_session = AsyncMock()
+    mock_result = MagicMock()
+    mock_result.scalar_one_or_none.return_value = mock_record
+    mock_session.execute.return_value = mock_result
 
-    async with AsyncClient(app=app, base_url="http://test") as ac:
-        response = await ac.get("/records/2")
-        assert response.status_code == 200
-        assert response.json()["name"] == "Found"
+    result = await get_record(record_id=1, db=mock_session)
 
+    assert result.id == mock_record.id
+    assert result.name == mock_record.name
+
+# -------------------------------
+# ✅ Use Case: Get record by ID - Not found
+# -------------------------------
 @pytest.mark.asyncio
 async def test_get_record_by_id_not_found():
-    async with AsyncClient(app=app, base_url="http://test") as ac:
-        response = await ac.get("/records/999")
-        assert response.status_code == 404
-        assert response.json()["detail"] == "Record not found"
+    mock_session = AsyncMock()
+    mock_result = MagicMock()
+    mock_result.scalar_one_or_none.return_value = None
+    mock_session.execute.return_value = mock_result
+
+    with pytest.raises(HTTPException) as exc_info:
+        await get_record(record_id=999, db=mock_session)
+
+    assert exc_info.value.status_code == 404
+    assert exc_info.value.detail == "Record not found"

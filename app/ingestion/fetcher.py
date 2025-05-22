@@ -17,12 +17,13 @@ class Fetcher:
         
     async def fetch(self, session: aiohttp.ClientSession) -> dict | None:
         retries = 0
-        while retries < self.max_retries:
+        while retries < self.retries:
             try:
                 headers = {
                     "Authorization": f"Bearer {self.api_key}"
                 }
                 
+                # Direct communication with the api
                 async with session.get(self.api_endpoint, headers=headers, timeout=self.timeout) as response:
                     if response.status == 200:
                         logger.info("Data fetched successfully.")
@@ -39,5 +40,5 @@ class Fetcher:
         return None
     
     async def run(self) -> dict | None:
-        async with aiohttp.ClientSession as session:
+        async with aiohttp.ClientSession() as session:
             return await self.fetch(session=session)

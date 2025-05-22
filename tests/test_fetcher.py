@@ -1,51 +1,47 @@
 import pytest
-import aiohttp
-import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
-
+from unittest.mock import AsyncMock, patch, MagicMock
 from app.ingestion.fetcher import Fetcher
 
 @pytest.mark.asyncio
-async def test_fetcher_success_response():
-    # Sample mocked API response
-    sample_response = {"message": "Success"}
+async def test_fetch_success():
+    # Mock response with expected data
+    mock_response = AsyncMock()
+    mock_response.status = 200
+    mock_response.json.return_value = {"id": 1, "name": "test"}
 
-    # Patch the session.get call inside aiohttp.ClientSession
-    with patch("aiohttp.ClientSession.get") as mock_get:
-        # Mocking the async context manager behavior
-        mock_response = MagicMock()
-        mock_response.__aenter__.return_value = mock_response
-        mock_response.status = 200
-        mock_response.json = AsyncMock(return_value=sample_response)
-        mock_get.return_value = mock_response
+    # Use MagicMock for the session, since we need to control get()'s async context behavior
+    mock_session = MagicMock()
+    mock_session.get.return_value.__aenter__.return_value = mock_response
+    mock_session.get.return_value.__aexit__.return_value = None
 
-        fetcher = Fetcher()
-        async with aiohttp.ClientSession() as session:
-            result = await fetcher.fetch(session)
+    fetcher = Fetcher()
+    data = await fetcher.fetch(mock_session)
 
-        assert result == sample_response
-        mock_get.assert_called_once()
+    assert data == {"id": 1, "name": "test"}
+
 
 @pytest.mark.asyncio
-async def test_fetcher_non_200_response():
-    with patch("aiohttp.ClientSession.get") as mock_get:
-        mock_response = MagicMock()
-        mock_response.__aenter__.return_value = mock_response
-        mock_response.status = 404
-        mock_response.json = AsyncMock(return_value={"error": "Not found"})
-        mock_get.return_value = mock_response
+async def test_fetch_non_200():
+    mock_response = AsyncMock()
+    mock_response.status = 404
+    mock_response.json.return_value = {}
 
-        fetcher = Fetcher()
-        async with aiohttp.ClientSession() as session:
-            result = await fetcher.fetch(session)
+    mock_session = AsyncMock()
+    mock_session.get.return_value.__aenter__.return_value = mock_response
 
-        assert result is None
+    fetcher = Fetcher()
+    result = await fetcher.fetch(mock_session)
+
+    assert result is None
 
 @pytest.mark.asyncio
-async def test_fetcher_all_retries_fail():
-    with patch("aiohttp.ClientSession.get", side_effect=Exception("Connection failed")):
-        fetcher = Fetcher()
-        async with aiohttp.ClientSession() as session:
-            result = await fetcher.fetch(session)
+async def test_fetch_raises_exception_then_fails(monkeypatch):
+    mock_session = AsyncMock()
+    mock_session.get.side_effect = Exception("Connection error")
 
-        assert result is None
+    fetcher = Fetcher()
+    fetcher.retries = 2
+    fetcher.retry_backoff = 0  # avoid delay in test
+
+    result = await fetcher.fetch(mock_session)
+    assert result is None

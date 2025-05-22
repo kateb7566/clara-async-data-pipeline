@@ -2,9 +2,9 @@
 
 from typing import Any, List, Dict
 from datetime import datetime
-from app.utils import get_logger
+from app.utils.logger import get_logger
 
-logger = get_logger()
+logger = get_logger(__name__)
 
 class Transformer:
     """
@@ -25,7 +25,7 @@ class Transformer:
             logger.warning("Transformer received empty data.")
             return []
 
-        transformed = []
+        transformed = [] # new variable
 
         for item in raw_data:
             try:

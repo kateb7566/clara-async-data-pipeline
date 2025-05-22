@@ -1,27 +1,45 @@
-import aiofiles
-import os
-import json
-from datetime import datetime
-from app.config import settings
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import SQLAlchemyError
+from app.models.schema import RecordModel
 from app.utils.logger import get_logger
+import redis.asyncio as redis
+import json
 
-logger = get_logger()
+logger = get_logger(__name__)
 
 class Storage:
-    def __init__(self):
-        self.output_dir = settings.OUTPUT_DIR
-        os.makedirs(self.output_dir, exist_ok=True)
-        
-    def _get_filename(self) -> str:
-        date_str = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-        return os.path.join(self.output_dir, f"data_{date_str}.jsonl")
+    def __init__(self, redis_url: str = "redis://localhost:6379"):
+        self.redis = redis.from_url(redis_url, decode_responses=True)
     
-    async def save(self, data: dict) -> None:
-        filename = self._get_filename()
-        
+    async def save_to_db(self, data: dict, db: AsyncSession) -> None:
         try:
-            async with aiofiles.open(filename, mode="a") as f:
-                await f.write(json.dumps(data) + "\n")
-            logger.info(f"Data saved to {filename}")
+            record = RecordModel(
+                id=int(data["id"]),
+                name=data["name"],
+                value=data["value"],
+                timestamp=data["timestamp"]
+            )
+            await db.add(record)
+            await db.commit()
+            logger.info(f"Record {record.id} saved to DB")
+        except SQLAlchemyError as e:
+            await db.rollback()
+            logger.error(f"Database error: {e}")
         except Exception as e:
-            logger.error(f"Failed to save data: {e}")
+            logger.error(f"Unexpected error: {e}")
+
+    async def cache_to_redis(self, data: dict) -> None:
+        try:
+            await self.redis.rpush("records", str(data))
+            logger.info("Record pushed to Redis")
+        except Exception as e:
+            logger.error(f"Failed to push to Redis: {e}")
+            
+    async def get_cached_record(self, record_id: int) -> dict:
+        try:
+            data = await self.redis.get(f"record:{record_id}")
+            return json.loads(data) if data else None
+        except Exception as e:
+            logger.error(f"Failed to get record from Redis: {e}")
+            return None
+
